@@ -153,6 +153,32 @@ fn packs_a_basic_package_to_a_tarball() {
     assert_eq!(names, vec!["package/index.js".to_string(), "package/package.json".into()]);
 }
 
+/// Regression test for <https://github.com/pnpm/pnpm/issues/13924>: the
+/// `tar-stream` -> `tar` crate swap dropped the typeflag, leaving regular
+/// entries with the zeroed `AREGTYPE` byte instead of the POSIX `REGTYPE`
+/// npm and pnpm 11 both write. `tar::Header::entry_type()` normalizes both
+/// bytes to `Regular` on read, so this checks the raw header byte at
+/// offset 156 that a strict reader (e.g. publint) actually looks at.
+#[test]
+fn packed_entries_use_the_posix_regular_file_typeflag() {
+    let (dir, opts) = fixture(&json!({ "name": "foo", "version": "1.2.3" }));
+    touch(dir.path(), "index.js", "module.exports = 1\n");
+
+    api::<SilentReporter, Host>(&opts).unwrap();
+
+    let tarball = dir.path().join("foo-1.2.3.tgz");
+    let file = std::fs::File::open(&tarball).unwrap();
+    let mut archive = tar::Archive::new(GzDecoder::new(file));
+    for entry in archive.entries().unwrap() {
+        let entry = entry.unwrap();
+        assert_eq!(
+            entry.header().as_bytes()[156],
+            b'0',
+            "typeflag byte should be the POSIX REGTYPE",
+        );
+    }
+}
+
 /// A symlink planted at the output `.tgz` path must not be followed:
 /// the atomic temp-file + rename replaces the symlink with the real
 /// tarball, leaving the symlink's target untouched. Otherwise a
