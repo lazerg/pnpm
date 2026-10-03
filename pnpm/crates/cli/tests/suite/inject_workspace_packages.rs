@@ -911,10 +911,14 @@ fn relinked_bin_of_an_injected_copy_keeps_a_custom_modules_dir_on_node_path() {
 
 fn write_workspace_with_injected_peer_consumer(
     workspace: &std::path::Path,
+    lib_peer_spec: &str,
     peer_provider_spec: &str,
 ) {
-    fs::write(workspace.join("pnpm-workspace.yaml"), "packages:\n  - app\n  - lib\n  - peer\n")
-        .expect("write pnpm-workspace.yaml");
+    fs::write(
+        workspace.join("pnpm-workspace.yaml"),
+        "packages:\n  - app\n  - lib\n  - peer\ncatalog:\n  is-positive: ^1.0.0\n",
+    )
+    .expect("write pnpm-workspace.yaml");
     fs::write(
         workspace.join("package.json"),
         serde_json::json!({ "name": "root", "private": true }).to_string(),
@@ -927,7 +931,7 @@ fn write_workspace_with_injected_peer_consumer(
             serde_json::json!({
                 "name": "lib",
                 "version": "1.0.0",
-                "peerDependencies": { "is-positive": "^1.0.0" },
+                "peerDependencies": { "is-positive": lib_peer_spec },
             }),
         ),
         (
@@ -949,7 +953,7 @@ fn write_workspace_with_injected_peer_consumer(
 
 /// Generates the lockfile, removes every `node_modules`, and installs again
 /// with `--frozen-lockfile`, which must accept the lockfile it just wrote.
-fn assert_frozen_install_accepts_fresh_lockfile(peer_provider_spec: &str) {
+fn assert_frozen_install_accepts_fresh_lockfile(lib_peer_spec: &str, peer_provider_spec: &str) {
     let CommandTempCwd {
         pacquet,
         root,
@@ -958,7 +962,7 @@ fn assert_frozen_install_accepts_fresh_lockfile(peer_provider_spec: &str) {
         ..
     } = CommandTempCwd::init().add_mocked_registry();
     let AddMockedRegistry { mock_instance, .. } = npmrc_info;
-    write_workspace_with_injected_peer_consumer(&workspace, peer_provider_spec);
+    write_workspace_with_injected_peer_consumer(&workspace, lib_peer_spec, peer_provider_spec);
 
     pacquet
         .with_args(["install", "--lockfile-only"])
@@ -1108,10 +1112,16 @@ fn assert_frozen_install_accepts_injected_optional_peer(declared_range: bool) {
 /// Regression test for <https://github.com/pnpm/pnpm/issues/16332>.
 #[test]
 fn frozen_install_accepts_injected_dependency_whose_peer_is_a_workspace_link() {
-    assert_frozen_install_accepts_fresh_lockfile("workspace:*");
+    assert_frozen_install_accepts_fresh_lockfile("^1.0.0", "workspace:*");
 }
 
 #[test]
 fn frozen_install_accepts_injected_dependency_with_an_unmet_peer() {
-    assert_frozen_install_accepts_fresh_lockfile("2.0.0");
+    assert_frozen_install_accepts_fresh_lockfile("^1.0.0", "2.0.0");
+}
+
+/// Regression test for <https://github.com/pnpm/pnpm/issues/16557>.
+#[test]
+fn frozen_install_accepts_injected_dependency_with_a_catalog_peer() {
+    assert_frozen_install_accepts_fresh_lockfile("catalog:", "workspace:*");
 }

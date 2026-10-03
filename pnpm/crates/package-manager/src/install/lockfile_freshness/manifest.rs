@@ -1,6 +1,6 @@
 use super::{
     super::{
-        Config, DependencyGroup, Lockfile, PackageManifest, Path, StalenessReason,
+        Catalogs, Config, DependencyGroup, Lockfile, PackageManifest, Path, StalenessReason,
         satisfies_package_manifest,
     },
     FreshnessCheckError,
@@ -35,6 +35,8 @@ pub(crate) struct WorkspaceProjects<'a> {
     /// hold only in memory. An injected project is read from here before its
     /// directory on disk.
     pub(crate) manifests_by_dir: &'a super::ProjectManifestsByDir<'a>,
+    /// The catalogs a project's `catalog:` specifiers resolve against.
+    pub(crate) catalogs: &'a Catalogs,
 }
 
 /// Which of the project's `optionalDependencies` the comparison leaves out.

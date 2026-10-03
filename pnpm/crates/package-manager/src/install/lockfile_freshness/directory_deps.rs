@@ -2,11 +2,16 @@ mod spec;
 
 use super::manifest::ImporterSatisfactionCheck;
 use crate::install::lockfile_freshness::FreshnessCheckError;
+use pnpm_catalogs_resolver::{
+    CatalogAnchor, CatalogResolutionResult, WantedDependency, resolve_from_catalog,
+};
+use pnpm_catalogs_types::Catalogs;
 use pnpm_injected_deps_syncer::publish_source_dir;
 use pnpm_lockfile::StalenessReason;
 use pnpm_package_manifest::{DependencyGroup, PackageManifest};
 use spec::spec_satisfies_snapshot_dep;
 use std::{
+    borrow::Cow,
     collections::HashMap,
     path::{Path, PathBuf},
 };
@@ -213,7 +218,7 @@ fn check_single_directory_dep_freshness(
             check.optional_exclusions.allow_unresolved,
         )?;
     }
-    check_local_peer_deps_freshness(dep, &local_manifest, pkg_meta)
+    check_local_peer_deps_freshness(dep, &local_manifest, pkg_meta, check.workspace.catalogs)
 }
 
 /// Compares only the declared peer ranges with the recorded ones. The
@@ -224,20 +229,37 @@ fn check_local_peer_deps_freshness(
     dep: &LocalDepContext<'_>,
     local_manifest: &PackageManifest,
     pkg_meta: &pnpm_lockfile::PackageMetadata,
+    catalogs: &Catalogs,
 ) -> Result<(), FreshnessCheckError> {
-    let mut manifest_peers: std::collections::HashMap<&str, &str> = local_manifest
+    let mut manifest_peers: std::collections::HashMap<&str, Cow<'_, str>> = local_manifest
         .dependencies([DependencyGroup::Peer])
+        .map(|(name, spec)| (name, resolve_catalog_peer_range(catalogs, name, spec)))
         .collect();
     for name in optional_peer_names(local_manifest) {
-        manifest_peers.entry(name).or_insert("*");
+        manifest_peers
+            .entry(name)
+            .or_insert(Cow::Borrowed("*"));
     }
     check_recorded_peer_specs_match(dep, &manifest_peers, pkg_meta)?;
     check_peer_dependencies_meta_freshness(dep, local_manifest, pkg_meta)
 }
 
+fn resolve_catalog_peer_range<'a>(catalogs: &Catalogs, name: &str, spec: &'a str) -> Cow<'a, str> {
+    if !spec.starts_with("catalog:") {
+        return Cow::Borrowed(spec);
+    }
+    let wanted = WantedDependency { alias: name.to_string(), bare_specifier: spec.to_string() };
+    match resolve_from_catalog(catalogs, &wanted, CatalogAnchor::AsWritten) {
+        CatalogResolutionResult::Found(found) => Cow::Owned(found.resolution.specifier),
+        CatalogResolutionResult::Misconfiguration(_) | CatalogResolutionResult::Unused => {
+            Cow::Borrowed(spec)
+        }
+    }
+}
+
 fn check_recorded_peer_specs_match(
     dep: &LocalDepContext<'_>,
-    manifest_peers: &std::collections::HashMap<&str, &str>,
+    manifest_peers: &std::collections::HashMap<&str, Cow<'_, str>>,
     pkg_meta: &pnpm_lockfile::PackageMetadata,
 ) -> Result<(), FreshnessCheckError> {
     let recorded_count =
@@ -249,7 +271,7 @@ fn check_recorded_peer_specs_match(
         let recorded_spec = pkg_meta.peer_dependencies
             .as_ref()
             .and_then(|p| p.get(*name));
-        if recorded_spec.map(String::as_str) != Some(spec) {
+        if recorded_spec.map(String::as_str) != Some(spec.as_ref()) {
             return Err(dep.outdated());
         }
     }
