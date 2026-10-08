@@ -77,10 +77,10 @@ pub enum PacklistError {
     },
 }
 
-/// Case-insensitive prefix matches for files always-included at the
-/// package root regardless of `.npmignore` / `files`. Mirrors
-/// `npm-packlist`'s `alwaysIncluded` set.
-const ALWAYS_INCLUDED_PREFIXES: &[&str] = &["readme", "license", "licence"];
+/// Case-insensitive stems of files always-included at the package root
+/// regardless of `.npmignore` / `files`. A stem matches the bare name or the
+/// name plus an extension, like `npm-packlist`'s `/readme{,.*[^~$]}` rules.
+const ALWAYS_INCLUDED_STEMS: &[&str] = &["readme", "license", "licence"];
 
 /// Version-control directory names that exclude every file under
 /// them at any depth. Drops VCS state from a published package
@@ -457,9 +457,13 @@ fn is_always_included_at_root(rel: &str) -> bool {
     if lower == "package.json" {
         return true;
     }
-    ALWAYS_INCLUDED_PREFIXES
+    ALWAYS_INCLUDED_STEMS
         .iter()
-        .any(|prefix| lower.starts_with(prefix))
+        .any(|stem| match lower.strip_prefix(stem) {
+            Some("") => true,
+            Some(rest) => rest.len() > 1 && rest.starts_with('.') && !rest.ends_with(['~', '$']),
+            None => false,
+        })
 }
 
 fn is_main_or_bin(rel: &str, main: Option<&str>, bins: &[&str]) -> bool {
